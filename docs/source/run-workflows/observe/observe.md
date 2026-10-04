@@ -74,6 +74,7 @@ The following table lists each exporter with its supported features and configur
 | [Arize AX](https://arize.com/docs/ax/) | [Observing with Arize AX](?provider=Arize-AX#provider-integration-guides){.external} | Logging, Tracing |
 | [NVIDIA Data Flywheel Blueprint](https://build.nvidia.com/nvidia/build-an-enterprise-data-flywheel) | [Observing with Data Flywheel](?provider=Data-Flywheel#provider-integration-guides){.external} | Logging, Tracing |
 | [Dynatrace](https://dynatrace.com/) | [Observing with Dynatrace](?provider=Dynatrace#provider-integration-guides){.external} | Logging, Tracing |
+| Future AGI | [Observing with Future AGI](?provider=Future-AGI#provider-integration-guides){.external} | Tracing |
 | [Galileo](https://galileo.ai/) | [Observing with Galileo](?provider=Galileo#provider-integration-guides){.external} | Logging, Tracing |
 | [Langfuse](https://langfuse.com/) | Refer to the `examples/observability/simple_calculator_observability` example for usage details | Logging, Tracing |
 | [LangSmith](https://www.langchain.com/langsmith) | [Observing with LangSmith](?provider=LangSmith#provider-integration-guides){.external} | Logging, Tracing, Evaluation Metrics |
@@ -211,6 +212,13 @@ For complete information about developing and integrating custom telemetry expor
   :sync: Dynatrace
 
     :::{include} ./observe-workflow-with-dynatrace.md
+
+  :::
+
+  :::{tab-item} Future AGI
+  :sync: Future-AGI
+
+    :::{include} ./observe-workflow-with-futureagi.md
 
   :::
 

@@ -22,6 +22,21 @@ uv run nat info components -t tracing
 3. Use file or console exporters for deterministic local debugging.
 4. For custom exporters, adapt `references/otel_file_exporter.py` and nearby toolkit exporter code.
 
+## Future AGI Observe
+
+Use `nvidia-nat[opentelemetry]` and set `FI_API_KEY`, `FI_SECRET_KEY`, and `FI_PROJECT_NAME` in the environment:
+
+```yaml
+general:
+  telemetry:
+    tracing:
+      futureagi:
+        _type: futureagi
+        # protocol: grpc  # HTTP is the default.
+```
+
+Exports traces only. See the [Future AGI guide](../../docs/source/run-workflows/observe/observe-workflow-with-futureagi.md) for endpoints, resource attributes, and security guidance.
+
 ## References
 
 - `references/telemetry.md`

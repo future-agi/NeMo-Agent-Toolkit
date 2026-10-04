@@ -16,6 +16,7 @@
 import logging
 import os
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field
 
@@ -399,6 +400,69 @@ async def arize_ax_telemetry_exporter(config: ArizeAxTelemetryExporter, builder:
         headers=headers,
         protocol=config.protocol,
         resource_attributes=merged_resource_attributes,
+        batch_size=config.batch_size,
+        flush_interval=config.flush_interval,
+        max_queue_size=config.max_queue_size,
+        drop_on_overflow=config.drop_on_overflow,
+        shutdown_timeout=config.shutdown_timeout,
+    )
+
+
+class FutureAGITelemetryExporter(BatchConfigMixin, TelemetryExporterBaseConfig, name="futureagi"):
+    """Export traces to Future AGI Observe over OTLP (HTTP default, or gRPC)."""
+
+    project: str = Field(
+        default="", description="Future AGI project name. If empty, uses the FI_PROJECT_NAME environment variable.")
+    api_key: SerializableSecretStr = Field(
+        default_factory=lambda: SerializableSecretStr(""),
+        description="Future AGI API key. If empty, uses the FI_API_KEY environment variable.")
+    secret_key: SerializableSecretStr = Field(
+        default_factory=lambda: SerializableSecretStr(""),
+        description="Future AGI secret key. If empty, uses the FI_SECRET_KEY environment variable.")
+    protocol: Literal["http", "grpc"] = Field(
+        default="http",
+        description="OTLP transport. HTTP posts to /tracer/v1/traces; gRPC uses the Future AGI gRPC collector.")
+    endpoint: str | None = Field(
+        default=None,
+        description="Full OTLP endpoint URL, used verbatim. If unset, derived from FI_BASE_URL (HTTP) or FI_GRPC_URL "
+        "(gRPC), else the hosted Future AGI defaults.")
+    project_type: Literal["observe"] = Field(default="observe",
+                                             description="Future AGI project type. Only `observe` is supported.")
+    resource_attributes: dict[str, str] = Field(
+        default_factory=dict,
+        description="Extra OpenTelemetry resource attributes merged with the Future AGI routing attributes.")
+
+
+@register_telemetry_exporter(config_type=FutureAGITelemetryExporter)
+async def futureagi_telemetry_exporter(config: FutureAGITelemetryExporter, builder: Builder):
+    """Create a telemetry exporter that sends OTLP traces to Future AGI Observe."""
+    from nat.plugins.opentelemetry import OTLPSpanAdapterExporter
+    from nat.plugins.opentelemetry.futureagi import build_auth_headers
+    from nat.plugins.opentelemetry.futureagi import build_resource_attributes
+    from nat.plugins.opentelemetry.futureagi import resolve_credential
+    from nat.plugins.opentelemetry.futureagi import resolve_endpoint
+    from nat.plugins.opentelemetry.futureagi import resolve_project
+
+    project = resolve_project(config.project, os.environ)
+    api_key = resolve_credential(
+        get_secret_value(config.api_key) if config.api_key else None, "FI_API_KEY", "api_key", os.environ)
+    secret_key = resolve_credential(
+        get_secret_value(config.secret_key) if config.secret_key else None, "FI_SECRET_KEY", "secret_key", os.environ)
+    endpoint = resolve_endpoint(config.endpoint, config.protocol, os.environ)
+    headers = build_auth_headers(api_key, secret_key, config.protocol)
+    resource_attributes = build_resource_attributes(project, config.project_type, config.resource_attributes)
+
+    split = urlsplit(endpoint)
+    if split.scheme == "http":
+        logger.warning("futureagi exporter: plaintext endpoint configured; credentials and payload are unencrypted")
+    if config.protocol == "grpc" and split.path:
+        logger.warning("futureagi exporter: gRPC endpoint path is ignored by the OTLP gRPC exporter")
+
+    yield OTLPSpanAdapterExporter(
+        endpoint=endpoint,
+        headers=headers,
+        protocol=config.protocol,
+        resource_attributes=resource_attributes,
         batch_size=config.batch_size,
         flush_interval=config.flush_interval,
         max_queue_size=config.max_queue_size,

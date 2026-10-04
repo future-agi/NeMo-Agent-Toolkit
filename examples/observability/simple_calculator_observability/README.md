@@ -120,6 +120,26 @@ Send traces to [Arize AX](https://arize.com/docs/ax/) using the `arize_ax` expor
 
 3. Open the Arize project matching your project name to view traces. For **EU** residency, set `use_eu_region: true` under `arize_ax` in the config file.
 
+### Future AGI
+
+Send traces to Future AGI Observe using the `futureagi` exporter (`nvidia-nat[opentelemetry]`). This integration supports traces only.
+
+1. Set credentials in the environment (the project defaults to `simple_calculator` in `config-futureagi.yml`):
+
+    ```bash
+    export FI_API_KEY="<your-api-key>"
+    export FI_SECRET_KEY="<your-secret-key>"
+    export FI_PROJECT_NAME="simple_calculator"
+    ```
+
+2. Run the workflow:
+
+    ```bash
+    nat run --config_file examples/observability/simple_calculator_observability/configs/config-futureagi.yml --input "What is 2 * 4?"
+    ```
+
+3. Open the matching Future AGI Observe project to view traces. HTTP is the default; uncomment `protocol: grpc` to use gRPC. For custom endpoints, private CAs, and troubleshooting, see the [Future AGI guide](../../../docs/source/run-workflows/observe/observe-workflow-with-futureagi.md).
+
 ### MLflow
 
 Send traces to a local [MLflow](https://mlflow.org/docs/latest/tracing/) tracking server using the `mlflow` exporter (`nvidia-nat[opentelemetry]`). MLflow 3.6+ ingests OTLP spans at `<server>/v1/traces`, routed to an experiment via `x-mlflow-experiment-id`.
@@ -314,6 +334,7 @@ The example includes multiple configuration files for different observability pl
 | `config-phoenix.yml` | Phoenix | Tracing with Phoenix |
 | `config-phoenix-nested.yml` | Phoenix | Testing parent-child span tracking with nested tool calls |
 | `config-arize-ax.yml` | Arize AX | Hosted OTLP tracing to Arize AX (requires `ARIZE_*` environment variables) |
+| `config-futureagi.yml` | Future AGI | Observe traces over HTTP or gRPC (requires `FI_API_KEY` and `FI_SECRET_KEY`) |
 | `config-mlflow.yml` | MLflow | Local OTLP tracing to an MLflow tracking server |
 | `config-otel-file.yml` | File Export | Local file-based tracing for development and debugging |
 | `config-langfuse.yml` | Langfuse | Langfuse monitoring and analytics |

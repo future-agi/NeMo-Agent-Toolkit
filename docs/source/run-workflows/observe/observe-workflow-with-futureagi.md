@@ -28,6 +28,8 @@ uv pip install -e ".[opentelemetry]"
 uv pip install -e examples/observability/simple_calculator_observability/
 ```
 
+LLM and tool spans are recorded by the profiler plugin. The development install (`uv sync --all-groups --extra most`) includes it; with a smaller install, also run `uv pip install -e ".[profiler]"`. Without it, traces contain only workflow and function spans.
+
 Complete the [Simple Calculator prerequisites](../../../../examples/getting_started/simple_calculator/README.md), including the LLM credentials, before running the workflow.
 
 ## Step 2: Configure the environment

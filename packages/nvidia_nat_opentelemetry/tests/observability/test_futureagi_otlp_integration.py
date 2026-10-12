@@ -55,6 +55,10 @@ def isolated_export_environment(monkeypatch):
             monkeypatch.delenv(name)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TIMEOUT", "1")
+    # The OTLP exporters drop a log record identical to the previous one within the same 20-second window, so an
+    # export error logged by an earlier test can hide the one a later test asserts on.
+    for logger_name in OTEL_LOGGERS.values():
+        monkeypatch.setattr(logging.getLogger(logger_name), "filters", [])
 
 
 @pytest.fixture(params=["http", "grpc"])
@@ -225,12 +229,13 @@ async def test_unreachable_collector_is_bounded_and_does_not_raise(protocol, mon
                 export_span(exporter, "unreachable")
                 await exporter.wait_for_tasks()
         assert time.monotonic() - started < 5
-    # HTTP: connection error propagates to the NAT mixin logger. gRPC: the installed exporter (1.39.1) retries
-    # UNAVAILABLE, then logs an ERROR from its own logger once retries are exhausted or the deadline passes.
-    expected_level = logging.ERROR
-    expected_logger = ("nat.plugins.opentelemetry.mixin.otlp_span_exporter_mixin"
-                       if protocol == "http" else OTEL_LOGGERS[protocol])
-    assert any(record.levelno == expected_level and record.name == expected_logger for record in caplog.records)
+    # HTTP: depending on the installed OTLP exporter, the connection error either propagates to the NAT mixin
+    # logger (1.39) or is logged by the OTLP HTTP exporter itself (1.4x). gRPC: the exporter retries UNAVAILABLE,
+    # then logs an ERROR from its own logger once retries are exhausted or the deadline passes.
+    expected_loggers = {OTEL_LOGGERS[protocol]}
+    if protocol == "http":
+        expected_loggers.add("nat.plugins.opentelemetry.mixin.otlp_span_exporter_mixin")
+    assert any(record.levelno == logging.ERROR and record.name in expected_loggers for record in caplog.records)
     assert MARKER not in caplog.text
 
 

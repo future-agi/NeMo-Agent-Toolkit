@@ -42,7 +42,7 @@ export FI_SECRET_KEY="<your-secret-key>"
 export FI_PROJECT_NAME="simple_calculator"
 ```
 
-The exporter reads these variables when the corresponding `api_key`, `secret_key`, or `project` field is empty or contains only whitespace. Nonblank configuration values take precedence, and surrounding whitespace is removed. Missing credentials or a missing project cause a configuration error before the exporter is created.
+The exporter reads these variables when the corresponding `api_key`, `secret_key`, or `project` field is empty or contains only whitespace. Configuration values that are not blank take precedence, and surrounding whitespace is removed. Missing credentials or a missing project cause a configuration error before the exporter is created.
 
 ## Step 3: Configure tracing
 
@@ -110,19 +110,19 @@ export FI_HIDE_INPUTS=true   # replaces inputs and nat.metadata with __REDACTED_
 export FI_HIDE_OUTPUTS=true  # replaces outputs and nat.metadata with __REDACTED__
 ```
 
-Alternatively, set `hide_inputs: true` or `hide_outputs: true` on the exporter; a configured value takes precedence over the environment. Only `true` and `false` are accepted, and any other value logs a warning and keeps the default. The redaction uses the toolkit's span redaction processor, so span names, timing, hierarchy, model names and token counts are still exported. When `NAT_SPAN_PREFIX` is set, the metadata attribute uses that prefix.
+Alternatively, set `hide_inputs: true` or `hide_outputs: true` on the exporter; a configured value takes precedence over the environment. Only `true` and `false` are accepted, and any other value logs a warning and keeps the default. The redaction uses the span redaction processor of the toolkit, so span names, timing, hierarchy, model names and token counts are still exported. When `NAT_SPAN_PREFIX` is set, the metadata attribute uses that prefix.
 
 ## Security and private certificate authorities
 
-Hosted defaults use HTTPS. Plaintext transport requires an explicit `http://` URL in `endpoint` or the relevant environment override. It emits a warning because credentials and trace payloads are unencrypted. Use HTTPS for remote collectors.
+Hosted defaults use HTTPS. Unencrypted transport requires an explicit `http://` URL in `endpoint` or the relevant environment override. It emits a warning because credentials and trace payloads are unencrypted. Use HTTPS for remote collectors.
 
 For a private certificate authority, set `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` to the CA certificate file, or use the general `OTEL_EXPORTER_OTLP_CERTIFICATE` variable. Both transports use the standard OpenTelemetry certificate settings. The exporter does not disable TLS verification or provide an `insecure` configuration option.
 
-Keep credential values out of YAML and logs. The toolkit's `SerializableSecretStr` serializes plaintext in `model_dump()`, so configuration dumps can expose credentials even when their normal representation is masked. The Future AGI factory does not log configuration objects, headers, endpoint values, or secrets.
+Keep credential values out of YAML and logs. The `SerializableSecretStr` type of the toolkit serializes the secret as clear text in `model_dump()`, so configuration dumps can expose credentials even when their normal representation is masked. The Future AGI factory does not log configuration objects, headers, endpoint values, or secrets.
 
 ## Troubleshooting
 
-- **Missing project or credentials:** Set `FI_PROJECT_NAME`, `FI_API_KEY`, and `FI_SECRET_KEY`, or check that the corresponding fields are nonblank. Error messages identify the field and environment variable without printing credential values.
+- **Missing project or credentials:** Set `FI_PROJECT_NAME`, `FI_API_KEY`, and `FI_SECRET_KEY`, or check that the corresponding fields are not blank. Error messages identify the field and environment variable without printing credential values.
 - **Authentication failure:** An HTTP `401` response or gRPC `UNAUTHENTICATED` status produces an `ERROR` log from the OpenTelemetry OTLP exporter. Verify both credentials and access to the Observe project. The workflow result is unaffected, but the rejected batch is not delivered; the exporter can still send subsequent batches.
 - **Collector unreachable:** Verify the scheme, host, port, and HTTP ingestion path. Export failures are logged and do not change the workflow result. Set `OTEL_EXPORTER_OTLP_TIMEOUT` (or the trace-specific `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`) to bound export attempts.
 - **Missing final spans:** Pending spans are flushed on orderly shutdown within `shutdown_timeout`. Keep this timeout long enough for the collector to respond. A full queue drops incoming spans when `drop_on_overflow: true`; otherwise it forces a flush to make space.

@@ -138,7 +138,7 @@ Send traces to Future AGI Observe using the `futureagi` exporter (`nvidia-nat[op
     nat run --config_file examples/observability/simple_calculator_observability/configs/config-futureagi.yml --input "What is 2 * 4?"
     ```
 
-3. Open the matching Future AGI Observe project to view traces. HTTP is the default; uncomment `protocol: grpc` to use gRPC. For custom endpoints, private CAs, and troubleshooting, see the [Future AGI guide](../../../docs/source/run-workflows/observe/observe-workflow-with-futureagi.md).
+3. Open the matching Future AGI Observe project to view traces. HTTP is the default; uncomment `protocol: grpc` to use gRPC. For custom endpoints, private certificate authorities, and troubleshooting, see the [Future AGI guide](../../../docs/source/run-workflows/observe/observe-workflow-with-futureagi.md).
 
 ### MLflow
 

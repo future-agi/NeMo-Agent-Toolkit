@@ -14,13 +14,23 @@
 # limitations under the License.
 """Pure configuration helpers for Future AGI Observe trace export."""
 
+import logging
 import unicodedata
 from collections.abc import Mapping
 from urllib.parse import urlsplit
 
+logger = logging.getLogger(__name__)
+
 FUTUREAGI_HTTP_BASE = "https://api.futureagi.com"
 FUTUREAGI_HTTP_TRACES_PATH = "/tracer/v1/traces"
 FUTUREAGI_GRPC_ENDPOINT = "https://grpc.futureagi.com"
+
+# Same environment variable names, default (content exported) and replacement value as the Future AGI traceAI SDK.
+FI_HIDE_INPUTS = "FI_HIDE_INPUTS"
+FI_HIDE_OUTPUTS = "FI_HIDE_OUTPUTS"
+FUTUREAGI_REDACTED_VALUE = "__REDACTED__"
+INPUT_CONTENT_ATTRIBUTES = ("input.value", "input.value_obj")
+OUTPUT_CONTENT_ATTRIBUTES = ("output.value", "output.value_obj")
 
 RESERVED_RESOURCE_KEYS = frozenset({
     "project_name",
@@ -100,6 +110,30 @@ def build_auth_headers(api_key: str, secret_key: str, protocol: str) -> dict[str
 def is_reserved_resource_key(key: str) -> bool:
     """Identify Future AGI routing and evaluation resource keys."""
     return key in RESERVED_RESOURCE_KEYS or key.startswith("fi.")
+
+
+def resolve_hide_flag(config_value: bool | None, env_name: str, env: Mapping[str, str]) -> bool:
+    """Resolve a content-hiding flag: explicit configuration, then `true`/`false` in the environment, else False."""
+    if config_value is not None:
+        return config_value
+    raw = env.get(env_name)
+    if raw is None:
+        return False
+    value = raw.strip().lower()
+    if value in {"true", "false"}:
+        return value == "true"
+    logger.warning("futureagi exporter: %s must be true or false; span content is exported", env_name)
+    return False
+
+
+def hidden_content_attributes(hide_inputs: bool, hide_outputs: bool, span_prefix: str) -> list[str]:
+    """List the span attributes to redact. The toolkit metadata attribute holds both inputs and outputs."""
+    attributes = [
+        *(INPUT_CONTENT_ATTRIBUTES if hide_inputs else ()), *(OUTPUT_CONTENT_ATTRIBUTES if hide_outputs else ())
+    ]
+    if attributes:
+        attributes.append(f"{span_prefix}.metadata")
+    return attributes
 
 
 def build_resource_attributes(project: str, project_type: str, user_attributes: dict[str, str]) -> dict[str, str]:

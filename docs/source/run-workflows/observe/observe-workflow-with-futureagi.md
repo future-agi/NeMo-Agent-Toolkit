@@ -86,7 +86,7 @@ Open the Future AGI Observe project matching `FI_PROJECT_NAME` to view traces. T
 | HTTP | `protocol: http` (default) | `https://api.futureagi.com/tracer/v1/traces` | `FI_BASE_URL` |
 | gRPC | `protocol: grpc` | `https://grpc.futureagi.com` | `FI_GRPC_URL` |
 
-For HTTP, `FI_BASE_URL` supplies the scheme and host, including any port. Its path is replaced with the Future AGI trace ingestion path. For example, `https://collector.example:8443/old/` becomes `https://collector.example:8443/tracer/v1/traces`. For gRPC, `FI_GRPC_URL` supplies the collector URL.
+For HTTP, `FI_BASE_URL` supplies the scheme and host, including any port. Its path is replaced with the Future AGI trace ingestion path. For example, `https://collector.example:8443/old/` becomes `https://collector.example:8443/tracer/v1/traces`. For gRPC, `FI_GRPC_URL` supplies the collector URL, including its scheme (for example `https://collector.example:4317`); a bare `host:port` value is rejected.
 
 For a self-hosted collector, set `endpoint` under the exporter to the complete OTLP URL. This takes precedence over both environment overrides and is used verbatim:
 
@@ -98,6 +98,19 @@ endpoint: https://collector.example:8443/tracer/v1/traces
 With `protocol: grpc`, use a collector URL such as `https://collector.example:4317`. A gRPC endpoint path is accepted with a warning because the underlying exporter ignores it. HTTP sends `X-Api-Key` and `X-Secret-Key` headers; gRPC sends lowercase `x-api-key` and `x-secret-key` metadata.
 
 Endpoints must have an HTTP or HTTPS scheme, a hostname, and a valid port if specified. Embedded credentials, query strings, fragments, whitespace, and control characters are rejected, including in environment overrides.
+
+## Captured content and hiding it
+
+Like the other toolkit trace exporters, the `futureagi` exporter sends span inputs and outputs by default: workflow and tool inputs, LLM prompts and responses (`input.value`, `input.value_obj`, `output.value`, `output.value_obj`) and the toolkit metadata attribute (`nat.metadata`), which repeats the chat and tool inputs and outputs. Treat this as sensitive data.
+
+To keep content out of the exported spans, use the same environment variables as the Future AGI tracing SDK:
+
+```bash
+export FI_HIDE_INPUTS=true   # replaces inputs and nat.metadata with __REDACTED__
+export FI_HIDE_OUTPUTS=true  # replaces outputs and nat.metadata with __REDACTED__
+```
+
+Alternatively, set `hide_inputs: true` or `hide_outputs: true` on the exporter; a configured value takes precedence over the environment. Only `true` and `false` are accepted, and any other value logs a warning and keeps the default. The redaction uses the toolkit's span redaction processor, so span names, timing, hierarchy, model names and token counts are still exported. When `NAT_SPAN_PREFIX` is set, the metadata attribute uses that prefix.
 
 ## Security and private certificate authorities
 

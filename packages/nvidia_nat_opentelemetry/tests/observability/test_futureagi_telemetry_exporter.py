@@ -26,9 +26,11 @@ from nat.plugins.opentelemetry.futureagi import RESERVED_RESOURCE_KEYS
 from nat.plugins.opentelemetry.futureagi import build_auth_headers
 from nat.plugins.opentelemetry.futureagi import build_resource_attributes
 from nat.plugins.opentelemetry.futureagi import derive_http_endpoint
+from nat.plugins.opentelemetry.futureagi import hidden_content_attributes
 from nat.plugins.opentelemetry.futureagi import is_reserved_resource_key
 from nat.plugins.opentelemetry.futureagi import resolve_credential
 from nat.plugins.opentelemetry.futureagi import resolve_endpoint
+from nat.plugins.opentelemetry.futureagi import resolve_hide_flag
 from nat.plugins.opentelemetry.futureagi import resolve_project
 from nat.plugins.opentelemetry.futureagi import validate_endpoint
 
@@ -64,7 +66,14 @@ BAD_ENDPOINTS = [
 
 @pytest.fixture(autouse=True)
 def clean_futureagi_environment(monkeypatch):
-    for name in ("FI_PROJECT_NAME", "FI_API_KEY", "FI_SECRET_KEY", "FI_BASE_URL", "FI_GRPC_URL"):
+    for name in ("FI_PROJECT_NAME",
+                 "FI_API_KEY",
+                 "FI_SECRET_KEY",
+                 "FI_BASE_URL",
+                 "FI_GRPC_URL",
+                 "FI_HIDE_INPUTS",
+                 "FI_HIDE_OUTPUTS",
+                 "NAT_SPAN_PREFIX"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -78,7 +87,11 @@ def recording_exporter(monkeypatch):
             self.kwargs = kwargs
             instances.append(self)
 
+    class RecordingRedactionExporter(RecordingExporter):
+        pass
+
     monkeypatch.setattr("nat.plugins.opentelemetry.OTLPSpanAdapterExporter", RecordingExporter)
+    monkeypatch.setattr("nat.plugins.opentelemetry.OTLPSpanHeaderRedactionAdapterExporter", RecordingRedactionExporter)
     return instances
 
 
@@ -103,6 +116,8 @@ def test_defaults_and_registration():
     assert config.secret_key.get_secret_value() == ""
     assert config.project_type == "observe"
     assert config.resource_attributes == {}
+    assert config.hide_inputs is None
+    assert config.hide_outputs is None
     assert config.static_type() == "futureagi"
     registration = GlobalTypeRegistry.get().get_telemetry_exporter(type(config))
     assert registration.build_fn is otel_register.futureagi_telemetry_exporter
@@ -330,3 +345,77 @@ def test_model_dump_contains_secrets_and_must_not_be_logged():
     dumped = config.model_dump()
     assert dumped["api_key"] == f"api-{MARKER}"
     assert dumped["secret_key"] == f"secret-{MARKER}"
+
+
+@pytest.mark.parametrize("config_value, env_value, expected",
+                         [(None, None, False), (None, "true", True), (None, " TRUE ", True), (None, "false", False),
+                          (None, "False", False), (True, "false", True), (False, "true", False), (True, None, True)])
+def test_hide_flag_precedence_matches_traceai(config_value, env_value, expected):
+    env = {} if env_value is None else {"FI_HIDE_INPUTS": env_value}
+    assert resolve_hide_flag(config_value, "FI_HIDE_INPUTS", env) is expected
+
+
+@pytest.mark.parametrize("env_value", ["1", "yes", "", f"on-{MARKER}"])
+def test_unparseable_hide_flag_warns_without_echo_and_keeps_default(env_value, caplog):
+    caplog.set_level(logging.DEBUG)
+    assert resolve_hide_flag(None, "FI_HIDE_OUTPUTS", {"FI_HIDE_OUTPUTS": env_value}) is False
+    assert "FI_HIDE_OUTPUTS must be true or false" in caplog.text
+    assert MARKER not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "hide_inputs, hide_outputs, expected",
+    [(False, False, []), (True, False, ["input.value", "input.value_obj", "nat.metadata"]),
+     (False, True, ["output.value", "output.value_obj", "nat.metadata"]),
+     (True, True, ["input.value", "input.value_obj", "output.value", "output.value_obj", "nat.metadata"])])
+def test_hidden_content_attributes(hide_inputs, hide_outputs, expected):
+    assert hidden_content_attributes(hide_inputs, hide_outputs, "nat") == expected
+
+
+async def test_content_is_exported_by_default(recording_exporter):
+    exporter = await create_exporter()
+    assert type(exporter).__name__ == "RecordingExporter"
+    assert "redaction_attributes" not in exporter.kwargs
+
+
+@pytest.mark.parametrize("env, overrides, expected",
+                         [({
+                             "FI_HIDE_INPUTS": "true"
+                         }, {}, ["input.value", "input.value_obj", "nat.metadata"]),
+                          ({
+                              "FI_HIDE_OUTPUTS": "true"
+                          }, {}, ["output.value", "output.value_obj", "nat.metadata"]),
+                          ({}, {
+                              "hide_inputs": True, "hide_outputs": True
+                          }, ["input.value", "input.value_obj", "output.value", "output.value_obj", "nat.metadata"]),
+                          ({
+                              "FI_HIDE_INPUTS": "true", "NAT_SPAN_PREFIX": "custom"
+                          }, {}, ["input.value", "input.value_obj", "custom.metadata"])])
+async def test_hide_flags_select_forced_redaction(env, overrides, expected, monkeypatch, recording_exporter):
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    exporter = await create_exporter(**overrides)
+    assert type(exporter).__name__ == "RecordingRedactionExporter"
+    assert exporter.kwargs["redaction_attributes"] == expected
+    assert exporter.kwargs["redaction_enabled"] is True
+    assert exporter.kwargs["force_redaction"] is True
+    assert exporter.kwargs["redaction_value"] == "__REDACTED__"
+    baseline = {key: value for key, value in exporter.kwargs.items() if not key.startswith(("redaction", "force"))}
+    assert set(baseline) == {
+        "endpoint",
+        "headers",
+        "protocol",
+        "resource_attributes",
+        "batch_size",
+        "flush_interval",
+        "max_queue_size",
+        "drop_on_overflow",
+        "shutdown_timeout"
+    }
+
+
+async def test_explicit_hide_flag_overrides_environment(monkeypatch, recording_exporter):
+    monkeypatch.setenv("FI_HIDE_INPUTS", "true")
+    monkeypatch.setenv("FI_HIDE_OUTPUTS", "true")
+    exporter = await create_exporter(hide_inputs=False, hide_outputs=False)
+    assert type(exporter).__name__ == "RecordingExporter"

@@ -51,7 +51,7 @@ OTEL_LOGGERS = {
 @pytest.fixture(autouse=True)
 def isolated_export_environment(monkeypatch):
     for name in os.environ:
-        if name.startswith(("OTEL_EXPORTER_OTLP", "FI_")):
+        if name.startswith(("OTEL_EXPORTER_OTLP", "FI_")) or name == "NAT_SPAN_PREFIX":
             monkeypatch.delenv(name)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TIMEOUT", "1")
@@ -125,11 +125,11 @@ async def configured_exporter(endpoint, protocol, **overrides):
             exporter._exporter.shutdown()
 
 
-def export_span(exporter, name):
+def export_span(exporter, name, input_text="test input", output_text="test output"):
     """Drive the same START/END event pipeline as the existing OTLP integration tests."""
     span_uuid = str(uuid.uuid4())
-    for event_type, data in [(IntermediateStepType.LLM_START, StreamEventData(input="test input")),
-                             (IntermediateStepType.LLM_END, StreamEventData(output="test output"))]:
+    for event_type, data in [(IntermediateStepType.LLM_START, StreamEventData(input=input_text)),
+                             (IntermediateStepType.LLM_END, StreamEventData(output=output_text))]:
         exporter.export(
             IntermediateStep(parent_id="root",
                              function_ancestry=InvocationNode(function_name=name, function_id=span_uuid,
@@ -284,3 +284,40 @@ async def test_queue_overflow_drops_or_forces_flush(receiver, drop_on_overflow, 
         assert received_names(receiver) == expected
     assert_routing(receiver)
     assert MARKER not in caplog.text
+
+
+def received_span_attributes(receiver):
+    return [{
+        entry.key: entry.value.string_value
+        for entry in span.attributes
+    } for request in receiver.requests for resource in request.resource_spans for scope in resource.scope_spans
+            for span in scope.spans]
+
+
+@pytest.mark.parametrize("hide, expected_redacted",
+                         [({}, set()), ({
+                             "FI_HIDE_INPUTS": "true"
+                         }, {"input.value", "input.value_obj", "nat.metadata"}),
+                          ({
+                              "FI_HIDE_OUTPUTS": "true"
+                          }, {"output.value", "output.value_obj", "nat.metadata"}),
+                          ({
+                              "FI_HIDE_INPUTS": "true", "FI_HIDE_OUTPUTS": "true"
+                          }, {"input.value", "input.value_obj", "output.value", "output.value_obj", "nat.metadata"})])
+async def test_hide_flags_keep_content_off_the_wire(receiver, hide, expected_redacted, monkeypatch):
+    for name, value in hide.items():
+        monkeypatch.setenv(name, value)
+    prompt, completion = f"prompt-{uuid.uuid4().hex}", f"completion-{uuid.uuid4().hex}"
+    async with configured_exporter(receiver.endpoint, receiver.protocol) as exporter:
+        async with exporter.start():
+            export_span(exporter, "content", input_text=prompt, output_text=completion)
+            await exporter.wait_for_tasks()
+    [attributes] = received_span_attributes(receiver)
+    wire = b"".join(request.SerializeToString() for request in receiver.requests)
+    for key in ("input.value", "input.value_obj", "output.value", "output.value_obj", "nat.metadata"):
+        assert key in attributes
+        assert (attributes[key] == "__REDACTED__") is (key in expected_redacted)
+    assert (prompt.encode() in wire) is not any(key.startswith("input") for key in expected_redacted)
+    assert (completion.encode() in wire) is not any(key.startswith("output") for key in expected_redacted)
+    assert attributes["llm.model_name"] == "content"
+    assert_routing(receiver)

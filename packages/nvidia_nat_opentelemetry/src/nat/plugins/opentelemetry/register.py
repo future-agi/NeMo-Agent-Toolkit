@@ -431,16 +431,30 @@ class FutureAGITelemetryExporter(BatchConfigMixin, TelemetryExporterBaseConfig, 
     resource_attributes: dict[str, str] = Field(
         default_factory=dict,
         description="Extra OpenTelemetry resource attributes merged with the Future AGI routing attributes.")
+    hide_inputs: bool | None = Field(
+        default=None,
+        description="Replace span inputs (`input.value`, `input.value_obj` and the toolkit metadata attribute) with "
+        "`__REDACTED__`. If unset, uses the FI_HIDE_INPUTS environment variable; inputs are exported by default.")
+    hide_outputs: bool | None = Field(
+        default=None,
+        description="Replace span outputs (`output.value`, `output.value_obj` and the toolkit metadata attribute) with "
+        "`__REDACTED__`. If unset, uses the FI_HIDE_OUTPUTS environment variable; outputs are exported by default.")
 
 
 @register_telemetry_exporter(config_type=FutureAGITelemetryExporter)
 async def futureagi_telemetry_exporter(config: FutureAGITelemetryExporter, builder: Builder):
     """Create a telemetry exporter that sends OTLP traces to Future AGI Observe."""
     from nat.plugins.opentelemetry import OTLPSpanAdapterExporter
+    from nat.plugins.opentelemetry import OTLPSpanHeaderRedactionAdapterExporter
+    from nat.plugins.opentelemetry.futureagi import FI_HIDE_INPUTS
+    from nat.plugins.opentelemetry.futureagi import FI_HIDE_OUTPUTS
+    from nat.plugins.opentelemetry.futureagi import FUTUREAGI_REDACTED_VALUE
     from nat.plugins.opentelemetry.futureagi import build_auth_headers
     from nat.plugins.opentelemetry.futureagi import build_resource_attributes
+    from nat.plugins.opentelemetry.futureagi import hidden_content_attributes
     from nat.plugins.opentelemetry.futureagi import resolve_credential
     from nat.plugins.opentelemetry.futureagi import resolve_endpoint
+    from nat.plugins.opentelemetry.futureagi import resolve_hide_flag
     from nat.plugins.opentelemetry.futureagi import resolve_project
 
     project = resolve_project(config.project, os.environ)
@@ -458,14 +472,27 @@ async def futureagi_telemetry_exporter(config: FutureAGITelemetryExporter, build
     if config.protocol == "grpc" and split.path:
         logger.warning("futureagi exporter: gRPC endpoint path is ignored by the OTLP gRPC exporter")
 
-    yield OTLPSpanAdapterExporter(
-        endpoint=endpoint,
-        headers=headers,
-        protocol=config.protocol,
-        resource_attributes=resource_attributes,
-        batch_size=config.batch_size,
-        flush_interval=config.flush_interval,
-        max_queue_size=config.max_queue_size,
-        drop_on_overflow=config.drop_on_overflow,
-        shutdown_timeout=config.shutdown_timeout,
-    )
+    exporter_kwargs = {
+        "endpoint": endpoint,
+        "headers": headers,
+        "protocol": config.protocol,
+        "resource_attributes": resource_attributes,
+        "batch_size": config.batch_size,
+        "flush_interval": config.flush_interval,
+        "max_queue_size": config.max_queue_size,
+        "drop_on_overflow": config.drop_on_overflow,
+        "shutdown_timeout": config.shutdown_timeout,
+    }
+    hidden = hidden_content_attributes(resolve_hide_flag(config.hide_inputs, FI_HIDE_INPUTS, os.environ),
+                                       resolve_hide_flag(config.hide_outputs, FI_HIDE_OUTPUTS, os.environ),
+                                       os.getenv("NAT_SPAN_PREFIX", "nat").strip() or "nat")
+    if not hidden:
+        yield OTLPSpanAdapterExporter(**exporter_kwargs)
+        return
+
+    # Reuse the toolkit's span redaction processor; forcing it applies the replacement to every span.
+    yield OTLPSpanHeaderRedactionAdapterExporter(**exporter_kwargs,
+                                                 redaction_attributes=hidden,
+                                                 redaction_enabled=True,
+                                                 force_redaction=True,
+                                                 redaction_value=FUTUREAGI_REDACTED_VALUE)
